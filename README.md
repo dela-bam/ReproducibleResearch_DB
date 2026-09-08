@@ -5,3 +5,4 @@ Retrieval biosample information from publicly available bioprojects related to h
 
 Create a clean meta data based on the biosample information for the selected bio project
 
+Biosample information is a raw meta data for the samples included in each bioproject, therefore you should make a clean and tidy meta data based on that. 
