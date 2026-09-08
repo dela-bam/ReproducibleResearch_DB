@@ -36,7 +36,7 @@ library("tidyverse")
 
 ```{r}
 
-library(tidyverse)
+
 
 # Read the file
 lines <- read_lines("biosample_result.txt")
