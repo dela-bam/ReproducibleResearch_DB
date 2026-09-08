@@ -1,0 +1,814 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+
+original_df <- read.table("biosample_result.txt", sep = "\t" , stringsAsFactors = F , header = F)
+dim(original_df)
+head(original_df,16)
+
+```
+
+
+
+```{r}
+getwd()
+```
+
+```{r}
+install.packages("tidyverse")
+```
+
+
+```{r}
+library("tidyverse")
+
+
+```
+
+
+
+```{r}
+
+library(tidyverse)
+
+# Read the file
+lines <- read_lines("biosample_result.txt")
+
+# Convert to tibble with line numbers
+df <- tibble(line = seq_along(lines), text = lines)
+
+# Mark start of each record
+df <- df %>%
+  mutate(record_id = cumsum(str_detect(text, "^\\d+: ")))
+
+# Collapse each record into one string
+records <- df %>%
+  group_by(record_id) %>%
+  summarise(record_text = paste(text, collapse = "\n"), .groups = "drop")
+
+# Keep only human metagenome: saliva
+saliva_records <- records %>%
+  filter(str_detect(record_text, "Human Metagenome:Saliva"))
+
+# Extract relevant fields
+saliva_parsed <- saliva_records %>%
+  mutate(
+    Record = str_extract(record_text, "^\\d+"),
+    GeographicLocation = str_extract(record_text, "/geographic location=\"[^\"]+\"") %>%
+                          str_remove("/geographic location=\"") %>%
+                          str_remove("\""),
+    Age     = str_extract(record_text, "/host age=\"[^\"]+\"") %>%
+                str_remove("/host age=\"") %>%
+                str_remove("\""),
+    Sex     = str_extract(record_text, "/host sex=\"[^\"]+\"") %>%
+                str_remove("/host sex=\"") %>%
+                str_remove("\""),
+    BMI     = str_extract(record_text, "/host body mass index=\"[^\"]+\"") %>%
+                str_remove("/host body mass index=\"") %>%
+                str_remove("\""),
+    Disease = str_extract(record_text, "/host disease=\"[^\"]+\"") %>%
+                str_remove("/host disease=\"") %>%
+                str_remove("\""),
+    Height  = str_extract(record_text, "/host height=\"[^\"]+\"") %>%
+                str_remove("/host height=\"") %>%
+                str_remove("\""),
+    Description = str_extract(record_text, "Description:[^\n]*") %>%
+                    str_remove("Description:"),
+    Accession = str_extract(record_text, "Accession: \\S+") %>%
+                  str_remove("Accession: ")
+  ) %>%
+  select(Record, GeographicLocation, Age, Sex, BMI, Disease, Height, Description, Accession)
+
+head(saliva_parsed)
+dim(saliva_parsed)
+```
+```{r}
+df_1 <- read_excel("SraRunInfo.xlsx")
+dim(df_1)
+head(df_1)
+head(df_1$BioSample)
+```
+
+
+```{r}
+id <- intersect(saliva_parsed$Accession,df_1$BioSample)
+
+sra_saliva <- df_1 %>%
+              filter(BioSample %in% id)
+head(sra_saliva)
+dim(sra_saliva)
+
+```
+
+
+```{r}
+write.csv(sra_saliva, file = "sra_saliva_PRJNA1057503.csv", row.names = FALSE)
+write.table(sra_saliva,file= "sra_saliva_PRJNA1057503.txt",sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+
+```{r}
+meta <- saliva_parsed %>%
+              filter(Accession %in% id)
+
+head(meta)
+dim(meta)
+
+merged_df <- merge(meta, sra_saliva[, c("BioSample", "Run")], by.x = "Accession", by.y = "BioSample", all.x = TRUE)
+head(merged_df)
+dim(merged_df)
+```
+
+
+```{r}
+
+
+write.table(merged_df, file = "metadata_PRJNA1057503.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+write.csv(merged_df, file = "metadata_PRJNA1057503.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+without_disease <- merged_df %>%
+                 filter(is.na(Disease) | Disease == "Disease")
+
+write.table(without_disease, file = "healthy_metadata_PRJNA1057503.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+write.csv(without_disease, file = "healthy_metadata_PRJNA1057503.csv", row.names = FALSE)
+
+
+```
+
+```{r}
+nrow(without_disease)
+
+perio <- merged_df %>%
+                 filter(Disease == "Periodontitis" | Disease== "Disease|Periodontitis" | Disease== "Disease|" | Disease== "Disease|Periodontitis")
+nrow(perio)
+```
+
+
+```{r}
+library(tidyverse)
+
+# Add flags for each disease
+disease_flags <- saliva_parsed %>%
+  filter(!is.na(Disease)) %>%
+  mutate(
+    has_periodontitis = str_detect(Disease, "Periodontitis"),
+    has_caries       = str_detect(Disease, "Dentin Caries")
+  )
+
+# Count each category
+disease_summary <- disease_flags %>%
+  summarise(
+    only_periodontitis = sum(has_periodontitis & !has_caries),
+    only_caries       = sum(has_caries & !has_periodontitis),
+    both              = sum(has_periodontitis & has_caries)
+  )
+
+disease_summary
+
+
+```
+
+
+```{r}
+meta_df <- read.table("metadata_PRJNA1057503.txt", sep = "\t" , stringsAsFactors = F , header = T)
+dim(meta_df)
+head(meta_df,40)
+```
+
+```{r}
+meta_df
+```
+```{r}
+ df_disease <- meta_df %>%
+  mutate(Disease = if_else(is.na(Disease), "no diseases", Disease)) %>%
+  filter(str_detect(Disease, "Dentin Caries|Periodontitis|no diseases")) %>%
+  count(Disease)
+
+  
+
+
+```
+
+```{r}
+df_non <- meta_df %>%
+  mutate(Disease = if_else(is.na(Disease), "no diseases", Disease)) %>%
+  filter(str_detect(Disease, "Dentin Caries|Periodontitis")) %>%
+  count(Disease)
+
+```
+
+
+```{r}
+merged_disease <- merged_df %>%
+  mutate(Disease = if_else(is.na(Disease), "no diseases", Disease)) %>%
+  filter(str_detect(Disease, "Dentin Caries|Periodontitis|no diseases"))
+  
+
+```
+
+
+
+```{r}
+write.table(df_disease, file = "disease_metadata_PRJNA1057503.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+write.csv(df_disease, file = "disease_metadata_PRJNA1057503.csv", row.names = FALSE)
+```
+
+
+```{r}
+write.table(merged_disease, file = "non_disease_metadata_PRJNA1057503.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+write.csv(merged_disease, file = "non_disease_metadata_PRJNA1057503.csv", row.names = FALSE)
+```
+
+
+
+```{r}
+meta_df %>%
+  summarise(num_NA = sum(is.na(Disease)))
+```
+
+
+```{r}
+meta_df %>%
+  summarise(disease_count = sum(Disease == "Dentin Caries", na.rm = TRUE))
+
+```
+
+```{r}
+meta_df %>%
+  summarise(disease_count = sum(Disease == "Periodontitis", na.rm = TRUE))
+```
+
+
+```{r}
+meta_df %>%
+  summarise(disease_count = sum(Disease == "Disease|Dentin Caries", na.rm = TRUE))
+```
+
+```{r}
+library(tidyverse)
+
+# Create flags for periodontitis, caries, and other diseases
+disease_flags <- saliva_parsed %>%
+  filter(!is.na(Disease)) %>%
+  mutate(
+    has_periodontitis = str_detect(Disease, "Periodontitis"),
+    has_caries       = str_detect(Disease, "Dentin Caries"),
+    has_other        = !str_detect(Disease, "Periodontitis|Dentin Caries") # any other disease
+  )
+
+# Strict categories: only count samples with *no other disease*
+strict_summary <- disease_flags %>%
+  filter(!has_other) %>%  # exclude any sample that contains other diseases
+  summarise(
+    only_periodontitis = sum(has_periodontitis & !has_caries),
+    only_caries       = sum(has_caries & !has_periodontitis),
+    both              = sum(has_periodontitis & has_caries)
+  )
+
+strict_summary
+
+```
+
+```{r}
+
+# Create flags for periodontitis, caries, and other diseases
+disease_flags <- saliva_parsed %>%
+  filter(!is.na(Disease)) %>%
+  mutate(
+    has_periodontitis = str_detect(Disease, "Periodontitis"),
+    has_caries       = str_detect(Disease, "Dentin Caries"),
+    has_other        = !str_detect(Disease, "^(Periodontitis|Dentin Caries)(\\|Periodontitis|\\|Dentin Caries)*$") 
+    # TRUE if there is any disease outside periodontitis/caries
+  ) %>%
+  filter(!has_other)  # keep only rows with no other diseases
+
+# Count each category
+strict_counts <- disease_flags %>%
+  summarise(
+    only_periodontitis = sum(has_periodontitis & !has_caries),
+    only_caries       = sum(has_caries & !has_periodontitis),
+    both              = sum(has_periodontitis & has_caries)
+  )
+
+strict_counts
+
+
+
+```
+
+
+```{r}
+library(stringr)
+
+result_data_frames <- list()
+
+# Define the target string to search for : # 33 saliva biosamples
+target_string <- "Organism: human oral metagenome"
+
+# Detect rows containing the target string
+rows_with_target <- which(str_detect(original_df$V1, target_string))
+length(rows_with_target)
+
+# Loop through the indices and create new data frames
+for (index in rows_with_target) {
+  # Ensure that we have all data for one biosample
+  if (index - 2 >= 1 && index + 17 <= nrow(original_df)) {
+    # Extract the desired rows and store in a new data frame
+    new_df <- original_df[(index - 2):(index + 17), ]
+    
+    # Append the new data frame to the list
+    result_data_frames[[length(result_data_frames) + 1]] <- new_df
+  }
+}
+```
+
+
+```{r}
+getwd()
+```
+
+
+```{r}
+#setting directory to save files as csv_files
+setwd("/Users/delba370/Downloads/saliva_signatures/bioprojects/PRJNA762543/csv_files")
+# Save each result data frame with a unique name
+for (i in 1:length(result_data_frames)) {
+  write.csv(result_data_frames[[i]], file = paste0("result_df_", i, ".csv"), row.names = FALSE)
+}
+
+#combining all files
+library(fs)
+library(dplyr)
+
+
+csv_files <- dir_ls(pattern = "result_df*.csv$")
+
+length(csv_files)
+# Read and combine all matching CSV files into one data frame
+combined_df <- do.call(rbind, lapply(csv_files, read.csv))
+
+# Save the combined data frame as a CSV file
+write.csv(combined_df, file = "combined_result_files.csv", row.names = FALSE)
+```
+
+
+```{r}
+
+
+
+df <- read.csv("combined_result_files.csv", header=TRUE, stringsAsFactors=FALSE)
+dim(df)
+head(df,23)
+```
+
+```{r}
+getwd()
+```
+
+```{r}
+# Create an empty dataframe to store the extracted information
+library(stringr)
+new_df1 <- data.frame( age = character(), identifiers= character(), accession = character(), stringsAsFactors = FALSE)
+
+# Iterate through each row of the saliva biosamples_combined file
+for (i in 1:nrow(df)) {
+  row <- df$x[i]
+  if (str_detect(row, "^\\d+: Saliva sample from ")) {
+    new_row <- data.frame(age = gsub("^\\d+: Saliva sample from ", "", row),
+                          identifiers = NA,
+                          accession = NA)
+                           
+    new_df1 <- rbind(new_df1, new_row)
+    
+  }else if (str_detect(row, "^Accession: ")) {
+    new_df1[nrow(new_df1), "accession"] <- gsub("^Accession: ", "", row)
+  } else if (str_detect(row,"^Identifiers: ")) {
+        new_df1[nrow(new_df1), "identifiers"] <- gsub("^Identifiers: ","",row)
+      }
+  
+    } 
+  
+
+head(new_df1,20)
+```
+
+```{r}
+install.packages("tidyr")
+```
+
+
+
+```{r}
+#let's see if this idea of chat gpt works also: 
+
+library(dplyr)
+library(stringr)
+library(tidyr)
+```
+
+
+```{r}
+df2 <- df %>%
+  mutate(line = row_number()) %>%
+  # new sample starts when line matches pattern
+  mutate(sample_block = cumsum(str_detect(x, "^\\d+: Saliva sample from"))) %>%
+  # keep only lines we care about
+  filter(str_detect(x, "Saliva sample from|Identifiers:|Accession:")) %>%
+  mutate(
+    key = case_when(
+      str_detect(x, "^\\d+: Saliva sample from") ~ "age",
+      str_detect(x, "^Identifiers:") ~ "identifiers",
+      str_detect(x, "^Accession:") ~ "accession"
+    ),
+    value = case_when(
+      key == "age" ~ str_remove(x, "^\\d+: Saliva sample from "),
+      key == "identifiers" ~ str_remove(x, "^Identifiers: "),
+      key == "accession" ~ str_remove(x, "^Accession: ")
+    )
+  ) %>%
+  select(sample_block, key, value) %>%
+  pivot_wider(names_from = key, values_from = value)
+
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+df2 <- df %>%
+  mutate(line = row_number()) %>%
+  mutate(sample_block = cumsum(str_detect(x, "^\\d+: Saliva sample from"))) %>%
+  filter(str_detect(x, "Saliva sample from|Identifiers:|Accession:")) %>%
+  mutate(
+    key = case_when(
+      str_detect(x, "^\\d+: Saliva sample from") ~ "age",
+      str_detect(x, "^Identifiers:") ~ "identifiers",
+      str_detect(x, "^Accession:") ~ "accession"
+    ),
+    value = case_when(
+      key == "age" ~ str_remove(x, "^\\d+: Saliva sample from "),
+      key == "identifiers" ~ str_remove(x, "^Identifiers: "),
+      key == "accession" ~ str_remove(x, "^Accession: ")
+    )
+  ) %>%
+  select(sample_block, key, value) %>%
+  pivot_wider(names_from = key, values_from = value) %>%
+  # separate identifiers into clean fields
+  separate_wider_regex(
+    identifiers,
+    patterns = c(
+      "BioSample: " = ".*?BioSample: (\\S+)",
+      "; Sample name: " = ".*?Sample name: (\\S+)",
+      "; SRA: " = ".*?SRA: (\\S+)"
+    ),
+    names = c("biosample", "sample_name", "sra")
+  )
+```
+
+
+```{r}
+df_1 <- read_excel("SraRunInfo.xlsx")
+dim(df_1)
+head(df_1)
+class(df_1$BioSample)
+```
+
+
+```{r}
+id <- intersect(new_df1$accession,df_1$BioSample)
+
+sra_saliva <- df_1 %>%
+              filter(BioSample %in% id)
+head(sra_saliva)
+dim(sra_saliva)
+
+```
+
+
+```{r}
+write.csv(sra_saliva, file = "sra_saliva.csv", row.names = FALSE)
+write.table(sra_saliva,file= "sra_saliva.txt",sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+
+```{r}
+meta <- new_df1 %>%
+              filter(accession %in% id)
+head(meta,20)
+dim(meta)
+```
+
+```{r}
+# Merge new_df1 and df_1 with only BioSample and Run columns
+merged_df <- merge(meta, sra_saliva[, c("BioSample", "Run")], by.x = "accession", by.y = "BioSample", all.x = TRUE)
+head(merged_df,20)
+dim(merged_df)
+# Add the Run column from the merged dataframe to new_df1
+
+
+
+ 
+```
+
+
+```{r}
+
+
+write.table(merged_df, file = "metadata_PRJNA762543.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+write.csv(merged_df, file = "metadata_PRJNA762543.csv", row.names = FALSE)
+```
+
+```{r}
+fresh_saliva <- merged_df %>%
+                filter(description == "saliva DNA")
+common_id <- intersect(fresh_saliva$accession,sra_saliva$BioSample)
+
+saliva_dna <- sra_saliva %>%
+              filter(BioSample %in% common_id)
+head(saliva_dna)
+dim(saliva_dna)
+```
+```{r}
+write.table(saliva_dna, file = "sra_salivadna_PRJDB18431.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+write.csv(merged_df, file = "sra_salivadna_PRJDB18431.csv", row.names = FALSE)
+```
+
+
+```{r}
+### do not go further
+library(stringr)
+#extracting the accession id for biosamples
+result_data_frames <- list()
+
+# Define the target string to search for : # 235 control participants
+target_string <- "gestation_saliva_rinse"
+
+# Detect rows containing the target string
+rows_with_target <- which(str_detect(df$x, target_string))
+length(rows_with_target)
+
+# Loop through the indices and create new data frames
+for (index in rows_with_target) {
+  # Ensure that there are at least 19 rows above and 1 row after the current index
+  if (index - 5 >= 1 && index + 7 <= nrow(df)) {
+    # Extract the desired rows and store in a new data frame
+    new_df <- df[(index + 6), ]
+    
+    # Append the new data frame to the list
+    result_data_frames[[length(result_data_frames) + 1]] <- new_df
+  }
+}
+```
+
+
+```{r}
+
+
+# Save each result data frame with a unique name
+f_df <- do.call(rbind, result_data_frames)
+head(f_df)
+dim(f_df)
+
+write.csv(f_df, file = "SAMN_id.csv", row.names = FALSE)
+```
+
+```{r}
+healthy <- read.csv("SAMN_id.csv",header = TRUE)
+head(healthy)
+healthy$V1 <- gsub("Accession: ", "", healthy$V1)
+head(healthy)
+```
+
+
+
+```{r}
+#choosing saliva sra for healthy samples
+df_1 <- read_excel("SraRunInfo.xlsx")
+dim(df_1)
+head(df_1)
+class(df_1$BioSample)
+```
+
+
+```{r}
+id <- intersect(healthy$V1,df_1$BioSample)
+sra_health <- df_1 %>%
+  filter(BioSample %in% id)
+head(sra_health)
+dim(sra_health)
+
+```
+
+
+```{r}
+write.csv(sra_health, file = "sra_salivarinse.csv", row.names = FALSE)
+write.table(sra_health,file= "sra_salivarinse.txt",sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+```{r}
+sra_unhealth <- df_1 %>%
+  filter(!BioSample %in% id)
+head(sra_unhealth)
+dim(sra_unhealth)
+```
+```{r}
+write.csv(sra_unhealth, file = "sra_unhealthy.csv", row.names = FALSE)
+write.table(sra_unhealth,file= "sra_unhealthy.txt",sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+
+```{r}
+healthy <- read_excel("SAMN_id copy.xlsx")
+head(healthy)
+healthy$V1 <- gsub("Accession: ", "", healthy$V1)
+head(healthy)
+
+```
+
+
+```{r}
+df_1 <- read.table("sra_salivarinse.txt", header=TRUE, stringsAsFactors=FALSE , sep = "\t")
+dim(df_1)
+head(df_1)
+head(df_1$BioSample)
+
+```
+
+
+```{r}
+
+
+# Merge new_df1 and df_1 with only BioSample and Run columns
+merged_df <- merge(healthy, df_1[, c("BioSample", "Run")], by.x = "V1", by.y = "BioSample", all.x = TRUE)
+head(merged_df)
+# Add the Run column from the merged dataframe to new_df1
+
+
+
+ 
+```
+```{r}
+
+head(merged_df)
+dim(merged_df)
+write.table(merged_df, file = "metadata_PRJNA1185841.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+head(read.table("metadata_PRJNA1185841.txt", header=TRUE, stringsAsFactors=FALSE , sep = "\t"))
+write.csv(merged_df, file = "metadata_PRJNA1185841.csv", row.names = FALSE)
+```
+
+
+```{r}
+meta <- read.table("metadata_PRJNA1185841.txt", header=TRUE, stringsAsFactors=FALSE , sep = "\t")
+sra_df <- read.table("sra_salivarinse.txt", header =TRUE, stringsAsFactors = FALSE, sep = "\t")
+```
+
+```{r}
+meta_healthy <- meta %>%
+                filter(condition=="healthy")
+
+dim(meta_healthy)
+```
+
+```{r}
+id <- intersect(sra_df$BioSample,meta_healthy$V1)
+sra_healthy <- sra_df %>%
+                filter(BioSample %in% id )
+dim(sra_healthy)
+```
+
+```{r}
+write.table(sra_healthy, file = "healthy_sra_PRJNA1185841.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+write.csv(sra_healthy, file = "healthy_sra_PRJNA1185841.csv", row.names = FALSE)
+
+```
+
+```{r}
+sra_unhealthy <- sra_df %>%
+                filter(!BioSample %in% id )
+dim(sra_unhealthy)
+```
+```{r}
+write.table(sra_unhealthy, file = "unhealthy_sra_PRJNA1185841.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+write.csv(sra_unhealthy, file = "unhealthy_sra_PRJNA1185841.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+#modify meta data:
+
+
+df <- read.csv("combined_result_files.csv", header=TRUE, stringsAsFactors=FALSE)
+dim(df)
+head(df,23)
+head(df$x)
+```
+
+
+```{r}
+# Load the stringr package
+#library(stringr)
+#new_df <- data.frame(age = NA, disease_status = NA, accession = NA)
+
+# Extract age, disease status, and accession information from each row
+#for (i in 1:nrow(df)) {
+#  row <- df$x[i]
+#  if (str_detect(row, "^    /host age=")) {
+#    new_df$age <- gsub("^    /host age=", "", row)
+#  } else if (str_detect(row, "^    /host disease=")) {
+#    new_df$disease_status <- gsub("^    /host disease=", "", row)
+#  } else if (str_detect(row, "^    /host sex=")) {
+#   new_df$sex <- gsub("^    /host sex=", "", row)
+#  } else if (str_detect(row, "^Accession:")) {
+ #   new_df$accession <- gsub("^Accession:", "", row)
+#  }
+#}
+
+
+# Print the new dataframe
+#head(new_df)
+#dim(new_df)
+```
+
+
+```{r}
+# Create an empty dataframe to store the extracted information
+library(stringr)
+new_df1 <- data.frame(age = character(), disease_status = character(), sex = character(), accession = character(), stringsAsFactors = FALSE)
+
+# Iterate through each row of the original dataframe
+for (i in 1:nrow(df)) {
+  row <- df$x[i]
+  if (str_detect(row, "^    /host age=")) {
+    new_row <- data.frame(age = gsub("^    /host age=", "", row),
+                          disease_status = NA,
+                          sex = NA,
+                          accession = NA)
+    new_df1 <- rbind(new_df1, new_row)
+  } else if (str_detect(row, "^    /host disease=")) {
+    new_df1[nrow(new_df1), "disease_status"] <- gsub("^    /host disease=", "", row)
+  } else if (str_detect(row, "^    /host sex=")) {
+    new_df1[nrow(new_df1), "sex"] <- gsub("^    /host sex=", "", row)
+  } else if (str_detect(row, "^Accession: ")) {
+    new_df1[nrow(new_df1), "accession"] <- gsub("^Accession: ", "", row)
+  }
+}
+
+head(new_df1, 25)
+new_df1$age <- sub(".*;", "", new_df1$age)
+head(new_df1$accession)
+```
+
+
+```{r}
+df_1 <- read.table("sra_healthy.txt", header=TRUE, stringsAsFactors=FALSE , sep = "\t")
+dim(df_1)
+head(df_1)
+head(df_1$BioSample)
+```
+
+
+```{r}
+# Add a new column to new_df1 to store the corresponding Run values
+#new_df1$Run <- NA 
+head(new_df1$accession)
+# Merge new_df1 and df_1 with only BioSample and Run columns
+merged_df <- merge(new_df1, df_1[, c("BioSample", "Run")], by.x = "accession", by.y = "BioSample", all.x = TRUE)
+head(merged_df)
+# Add the Run column from the merged dataframe to new_df1
+new_df1$Run <- merged_df$Run
+
+# Print the modified dataframe
+#print(new_df1)
+head(new_df1)
+dim(new_df1)
+write.table(new_df1, file = "metadata_832909.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+head(read.table("metadata_832909.txt", header=TRUE, stringsAsFactors=FALSE , sep = "\t"))
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
